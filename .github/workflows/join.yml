@@ -3,65 +3,74 @@ name: Join leaderboard
 on:
   issues:
     types: [opened, labeled]
+  workflow_dispatch:   # "Run workflow" handles every open join request (fixes stuck ones)
 
 permissions:
   contents: write
   issues: write
 
+# Each request runs on its own, so many students can join at the same time.
 concurrency:
-  group: leaderboard-data
-  cancel-in-progress: false
+  group: join-${{ github.event.issue.number || github.run_id }}
 
 jobs:
   join:
     if: >
-      startsWith(github.event.issue.title, 'Join') &&
-      github.event.issue.state == 'open' &&
-      (github.event.action == 'opened' || github.event.label.name == 'approved')
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.issue.title, 'Join') &&
+       github.event.issue.state == 'open' &&
+       (github.event.action == 'opened' || github.event.label.name == 'approved'))
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      NUMBER: ${{ github.event.issue.number }}
-      REPO: ${{ github.repository }}
-      NEEDS_APPROVAL: ${{ vars.REQUIRE_APPROVAL == 'true' && !contains(github.event.issue.labels.*.name, 'approved') }}
+      REQUIRE_APPROVAL: ${{ vars.REQUIRE_APPROVAL }}
+      NEEDS_APPROVAL: ${{ github.event_name == 'issues' && vars.REQUIRE_APPROVAL == 'true' && !contains(github.event.issue.labels.*.name, 'approved') }}
     steps:
       - name: Wait for teacher approval
         if: env.NEEDS_APPROVAL == 'true'
         run: |
-          gh issue comment "$NUMBER" --repo "$REPO" \
+          gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" \
             --body "Thanks! Your teacher will approve this soon. You'll get a message here when you're added."
 
       - uses: actions/checkout@v4
         if: env.NEEDS_APPROVAL != 'true'
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         if: env.NEEDS_APPROVAL != 'true'
         with:
           python-version: "3.12"
 
-      - name: Add student
-        if: env.NEEDS_APPROVAL != 'true'
-        env:
-          LOGIN: ${{ github.event.issue.user.login }}
-          BODY: ${{ github.event.issue.body }}
-        run: python join.py
-
-      - name: Collect stats
+      - name: Add student(s) and save
         if: env.NEEDS_APPROVAL != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.LEADERBOARD_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          if [ "$(cat result.txt)" != "invalid" ]; then python update.py; fi
+          git config user.name "leaderboard-bot"
+          git config user.email "leaderboard-bot@users.noreply.github.com"
+          # If another student joined at the same moment, start again from the newest copy.
+          saved=no
+          for attempt in 1 2 3 4 5 6 7 8; do
+            git fetch -q origin "$GITHUB_REF_NAME"
+            git reset -q --hard "origin/$GITHUB_REF_NAME"
+            python join.py
+            git add students.csv data.json
+            if git diff --cached --quiet; then echo "Nothing to save"; saved=yes; break; fi
+            git commit -q -m "Add student(s) from join requests"
+            if git push -q; then echo "Saved"; saved=yes; break; fi
+            echo "Someone else saved first, retrying ($attempt)"
+            sleep $(( (RANDOM % 8) + 2 ))
+          done
+          # Leave the request open if saving failed, so "Run workflow" can retry it later.
+          [ "$saved" = yes ]
 
-      - name: Save and reply
+      - name: Reply and close
         if: env.NEEDS_APPROVAL != 'true'
         run: |
-          if [ "$(cat result.txt)" != "invalid" ]; then
-            git config user.name "leaderboard-bot"
-            git config user.email "leaderboard-bot@users.noreply.github.com"
-            git add students.csv data.json
-            git diff --cached --quiet || git commit -m "Add student from issue #$NUMBER"
-            git pull --rebase
-            git push
-          fi
-          gh issue close "$NUMBER" --repo "$REPO" --comment "$(cat reply.md)"
+          python - <<'EOF'
+          import json, subprocess, os
+          for r in json.load(open("replies.json")):
+              subprocess.run(["gh", "issue", "close", str(r["number"]), "--repo", os.environ["GITHUB_REPOSITORY"],
+                              "--comment", r["reply"]], check=False)
+          EOF
