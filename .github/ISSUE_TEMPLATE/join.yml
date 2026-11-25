@@ -1,0 +1,27 @@
+name: Join the leaderboard
+description: Add yourself to the class leaderboard
+title: "Join: "
+labels: [join]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fill this in and click **Submit new issue**. You'll be added automatically
+        (or once your teacher approves), and this issue will close with a confirmation.
+        Your GitHub username is taken from your account, so you don't need to type it.
+  - type: input
+    id: name
+    attributes:
+      label: Your full name
+      description: As it should appear on the leaderboard
+      placeholder: Aarav Sharma
+    validations:
+      required: true
+  - type: input
+    id: repo
+    attributes:
+      label: Assignment repo (optional)
+      description: "Only if your teacher asked you to use one repo, e.g. your-username/python-assignments. Leave empty to count all your public repos."
+      placeholder: your-username/python-assignments
+    validations:
+      required: false
