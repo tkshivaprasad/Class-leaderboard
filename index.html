@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Class Leaderboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: a teacher's weekly results sheet, calm and exact.
+   IDEA: the leader page of a weekly paper: rankings on one baseline.
+   PICTURE: podium of the top three, then the full ranked table with 30-day activity strips.
+   COLOUR and TYPE: white, ink, red tab, slate activity; Source Serif 4 titles, Inter text.
+   LAYOUT: title row, podium band, controls, table; stacks on phones. */
+:root{color-scheme:light dark;--bg:light-dark(#fff,#10191e);--ink:light-dark(#121212,#e9eef0);--mute:light-dark(#5b6470,#9aa8b0);--rule:light-dark(#d9e1e5,#26343b);--panel:light-dark(#e3ecf0,#18252c);--red:#e3120b;--slate:light-dark(#2e6f8e,#6fb3d2);--warn:light-dark(#b3261e,#ff8a80)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Inter,system-ui,sans-serif;overflow-x:clip}
+.wrap{max-width:1240px;margin:0 auto;padding:0 max(5vw,16px)}
+header{border-top:6px solid var(--red);padding:28px 0 8px}
+.tab{display:inline-block;background:var(--red);color:#fff;font-weight:600;font-size:13px;padding:3px 10px;margin-bottom:14px}
+h1{font:600 clamp(32px,5vw,48px)/1.05 "Source Serif 4",Georgia,serif;margin:0 0 8px;text-wrap:balance}
+.meta{color:var(--mute);font-size:14px;margin:0}
+.note{background:var(--panel);padding:10px 14px;font-size:14px;margin:16px 0 0}
+.podium{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:28px 0;align-items:end}
+.p{background:var(--panel);padding:18px;border-top:4px solid var(--slate)}
+.p.first{border-top-color:var(--red);padding-top:34px}
+.p .rk{font:600 32px/1 "Source Serif 4",serif}
+.p .nm{font-weight:600;font-size:17px;margin-top:8px;overflow-wrap:anywhere}
+.p .gh{color:var(--mute);font-size:14px}
+.p .sc{font:600 clamp(28px,4vw,40px)/1.1 "Source Serif 4",serif;margin-top:10px}
+.p .sc small{font:500 13px Inter,sans-serif;color:var(--mute)}
+.stats{display:flex;flex-wrap:wrap;gap:8px 28px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:12px 0;margin-bottom:18px}
+.stats b{font:600 22px/1.2 "Source Serif 4",serif;display:block}.stats span{font-size:13px;color:var(--mute)}
+.controls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+input,select,button{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--rule);min-height:44px;padding:0 12px}
+input{flex:1 1 220px}
+button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+:focus-visible{outline:3px solid var(--slate);outline-offset:2px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th{text-align:left;font-weight:600;font-size:13px;color:var(--mute);border-bottom:2px solid var(--ink);padding:8px 6px;white-space:nowrap}
+th[data-k]{cursor:pointer}th.on::after{content:" ▾"}th.on.asc::after{content:" ▴"}
+td{border-bottom:1px solid var(--rule);padding:10px 6px;vertical-align:middle}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td a{color:inherit}.gh2{display:block;color:var(--mute);font-size:13px}
+.strip{display:flex;gap:2px;height:22px;align-items:flex-end;width:150px}
+.strip i{flex:1;background:var(--slate);min-height:2px;opacity:.9}.strip i.z{background:var(--rule)}
+.late{color:var(--warn);font-weight:600}
+.empty{padding:30px 0;color:var(--mute)}
+footer{color:var(--mute);font-size:14px;padding:28px 0 40px}
+@media(max-width:600px){.podium{grid-template-columns:1fr}.p.first{padding-top:18px;order:-1}.strip{width:120px}
+table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px;border-bottom:1px solid var(--rule)}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal;color:var(--mute)}.stack td:empty{display:none}}
+</style>
+<script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="tab">Class leaderboard</span>
+  <h1 id="title">Who's coding the most this month</h1>
+  <p class="meta" id="meta">Loading…</p>
+  <p class="note" id="note" hidden></p>
+</header>
+
+<section class="podium" id="podium" aria-label="Top three"></section>
+<div class="stats" id="stats"></div>
+
+<div class="controls">
+  <input id="q" type="search" placeholder="Search by name or username" aria-label="Search students">
+  <button id="idle" aria-pressed="false">Needs attention</button>
+</div>
+
+<table class="stack">
+  <thead><tr>
+    <th class="n" data-k="rank">Rank</th><th data-k="name">Student</th>
+    <th class="n" data-k="score">Score</th><th class="n" data-k="commits_7d">Commits 7d</th>
+    <th class="n" data-k="commits_30d">Commits 30d</th><th class="n" data-k="active_days">Active days</th>
+    <th class="n" data-k="streak">Streak</th><th data-k="last_commit">Last commit</th><th>Last 30 days</th>
+  </tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<p class="empty" id="empty" hidden>No students match.</p>
+
+<footer id="foot"></footer>
+</div>
+
+<script>
+{
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let data = null, sortKey = 'rank', asc = true, idleOnly = false;
+
+const daysSince = d => d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z')) / 864e5) : Infinity;
+const ago = d => { const n = daysSince(d); return n === Infinity ? 'Never' : n <= 0 ? 'Today' : n === 1 ? 'Yesterday' : n + ' days ago'; };
+const ghLink = s => s.repo ? `https://github.com/${encodeURIComponent(s.repo.split('/')[0])}/${encodeURIComponent(s.repo.split('/')[1] || '')}` : `https://github.com/${encodeURIComponent(s.github)}`;
+
+function strip(daily) {
+  const max = Math.max(1, ...daily);
+  return `<div class="strip" aria-label="${daily.reduce((a,b)=>a+b,0)} commits over 30 days">` +
+    daily.map(c => `<i class="${c ? '' : 'z'}" style="height:${c ? Math.max(12, c / max * 100) : 8}%" title="${c} commits"></i>`).join('') + '</div>';
+}
+
+function render() {
+  const list = data.students;
+  const top = list.filter(s => !s.error).slice(0, 3);
+  const order = [1, 0, 2].filter(i => top[i]);
+  $('podium').innerHTML = order.map(i => { const s = top[i]; return `
+    <div class="p ${i === 0 ? 'first' : ''}">
+      <div class="rk">#${i + 1}</div>
+      <div class="nm">${esc(s.name)}</div><div class="gh">@${esc(s.github)}</div>
+      <div class="sc">${esc(s.score)} <small>points · ${esc(s.commits_30d)} commits</small></div>
+    </div>`; }).join('');
+
+  const ok = list.filter(s => !s.error);
+  const active7 = ok.filter(s => s.commits_7d > 0).length;
+  const total = ok.reduce((a, s) => a + s.commits_30d, 0);
+  const idle = ok.filter(s => daysSince(s.last_commit) > 7).length;
+  $('stats').innerHTML = [
+    [list.length, 'students'], [total, 'commits in 30 days'],
+    [`${active7} of ${ok.length}`, 'active this week'], [idle, 'no commits for 7+ days']
+  ].map(([v, l]) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('');
+
+  const q = $('q').value.trim().toLowerCase();
+  let rows = list.map((s, i) => ({...s, rank: s.error ? Infinity : i + 1}))
+    .filter(s => !q || (s.name + ' ' + s.github).toLowerCase().includes(q))
+    .filter(s => !idleOnly || s.error || daysSince(s.last_commit) > 7);
+  rows.sort((a, b) => {
+    let x = a[sortKey], y = b[sortKey];
+    if (sortKey === 'last_commit') { x = -daysSince(x); y = -daysSince(y); }
+    if (typeof x === 'string') return asc ? x.localeCompare(y) : y.localeCompare(x);
+    x = x ?? -1; y = y ?? -1;
+    return asc ? x - y : y - x;
+  });
+
+  $('rows').innerHTML = rows.map(s => s.error ? `
+    <tr><td class="n">–</td><td>${esc(s.name)}<span class="gh2">@${esc(s.github)}</span></td>
+    <td colspan="7" class="late">Could not load: check the username or repo in students.csv</td></tr>` : `
+    <tr>
+      <td class="n">${s.rank}</td>
+      <td><a href="${esc(ghLink(s))}">${esc(s.name)}</a><span class="gh2">@${esc(s.github)}${s.repo ? ' · ' + esc(s.repo) : ''}</span></td>
+      <td class="n"><b>${esc(s.score)}</b></td>
+      <td class="n">${esc(s.commits_7d)}</td><td class="n">${esc(s.commits_30d)}</td>
+      <td class="n">${esc(s.active_days)}</td><td class="n">${esc(s.streak)} d</td>
+      <td class="${daysSince(s.last_commit) > 7 ? 'late' : ''}">${esc(ago(s.last_commit))}</td>
+      <td>${strip(s.daily || [])}</td>
+    </tr>`).join('');
+  $('empty').hidden = rows.length > 0;
+  document.querySelectorAll('th[data-k]').forEach(th => {
+    th.classList.toggle('on', th.dataset.k === sortKey);
+    th.classList.toggle('asc', th.dataset.k === sortKey && asc);
+  });
+}
+
+document.querySelectorAll('th[data-k]').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.k;
+  if (k === sortKey) asc = !asc; else { sortKey = k; asc = k === 'rank' || k === 'name'; }
+  render();
+}));
+$('q').addEventListener('input', () => data && render());
+$('idle').addEventListener('click', e => { idleOnly = !idleOnly; e.currentTarget.setAttribute('aria-pressed', idleOnly); data && render(); });
+
+fetch('data.json', {cache: 'no-store'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+  data = d;
+  const sc = d.scoring || {};
+  $('meta').textContent = `Last ${d.days} days · updated ${new Date(d.updated).toLocaleString()}`;
+  $('foot').textContent = `Score = ${sc.commit} per commit (max ${sc.max_commits_per_day} a day) + ${sc.active_day} per active day + ${sc.streak_day} per streak day. Data refreshes automatically every 6 hours.`;
+  if (d.sample) { $('note').hidden = false; $('note').textContent = 'Sample data shown. It will be replaced after the first update run.'; }
+  render();
+}).catch(() => {
+  $('meta').textContent = 'No data yet. Run the "Update leaderboard" workflow from the Actions tab.';
+});
+}
+</script>
+</body>
+</html>
