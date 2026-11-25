@@ -9,7 +9,7 @@ A free leaderboard that tracks your students' GitHub commits. It runs entirely o
 
 1. **Create a repo.** Make a new repository on GitHub (for example `class-leaderboard`) and upload every file in this folder, including the `.github` folder.
    - Tip: the `.github` folder is hidden on Mac/Linux. You can also create `.github/workflows/update.yml` with GitHub's "Add file → Create new file" and paste in its contents.
-2. **Add your students.** Edit `students.csv`, with one row per student:
+2. **Add your students.** Students can join themselves (see *Student self-join* below), or you can edit `students.csv` yourself, one row per student:
    ```
    name,github,repo
    Aarav Sharma,aarav-sharma,
@@ -22,6 +22,29 @@ A free leaderboard that tracks your students' GitHub commits. It runs entirely o
 5. **Run it once.** On the Actions tab, open **Update leaderboard** and click **Run workflow**.
 
 Your leaderboard will be at `https://<your-username>.github.io/class-leaderboard/`.
+
+## Student self-join
+
+The leaderboard page has a **Join the leaderboard** button. It opens a short form on GitHub with the student's name and an optional assignment repo. When a student submits it, the *Join leaderboard* workflow:
+
+1. Adds them to `students.csv`. Their GitHub username comes from their signed-in account, so nobody can add someone else.
+2. Collects their stats straight away.
+3. Closes the request with a confirmation message.
+
+If a student submits the form again, their name or repo is updated instead of being added twice.
+
+You can also share the form link directly:
+`https://github.com/<your-username>/<repo-name>/issues/new?template=join.yml`
+
+**Requirements:** Issues must be on (Settings → General → Features → Issues), and the repo must be public so students can open issues.
+
+**Approve students before they join (optional).** Since the repo is public, anyone with a GitHub account could join. To check each request first:
+1. Go to Settings → Secrets and variables → Actions → **Variables** tab → New repository variable.
+2. Name it `REQUIRE_APPROVAL` and set the value to `true`.
+
+New requests then wait. To approve one, open the request and add the label `approved`. GitHub lets you create the label the first time you type it. To reject one, just close it.
+
+**Removing a student:** delete their line from `students.csv`.
 
 ## Private repos
 
