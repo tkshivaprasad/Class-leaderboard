@@ -1,0 +1,67 @@
+name: Join leaderboard
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: leaderboard-data
+  cancel-in-progress: false
+
+jobs:
+  join:
+    if: >
+      startsWith(github.event.issue.title, 'Join') &&
+      github.event.issue.state == 'open' &&
+      (github.event.action == 'opened' || github.event.label.name == 'approved')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NUMBER: ${{ github.event.issue.number }}
+      REPO: ${{ github.repository }}
+      NEEDS_APPROVAL: ${{ vars.REQUIRE_APPROVAL == 'true' && !contains(github.event.issue.labels.*.name, 'approved') }}
+    steps:
+      - name: Wait for teacher approval
+        if: env.NEEDS_APPROVAL == 'true'
+        run: |
+          gh issue comment "$NUMBER" --repo "$REPO" \
+            --body "Thanks! Your teacher will approve this soon. You'll get a message here when you're added."
+
+      - uses: actions/checkout@v4
+        if: env.NEEDS_APPROVAL != 'true'
+
+      - uses: actions/setup-python@v5
+        if: env.NEEDS_APPROVAL != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Add student
+        if: env.NEEDS_APPROVAL != 'true'
+        env:
+          LOGIN: ${{ github.event.issue.user.login }}
+          BODY: ${{ github.event.issue.body }}
+        run: python join.py
+
+      - name: Collect stats
+        if: env.NEEDS_APPROVAL != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.LEADERBOARD_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$(cat result.txt)" != "invalid" ]; then python update.py; fi
+
+      - name: Save and reply
+        if: env.NEEDS_APPROVAL != 'true'
+        run: |
+          if [ "$(cat result.txt)" != "invalid" ]; then
+            git config user.name "leaderboard-bot"
+            git config user.email "leaderboard-bot@users.noreply.github.com"
+            git add students.csv data.json
+            git diff --cached --quiet || git commit -m "Add student from issue #$NUMBER"
+            git pull --rebase
+            git push
+          fi
+          gh issue close "$NUMBER" --repo "$REPO" --comment "$(cat reply.md)"
