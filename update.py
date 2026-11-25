@@ -120,20 +120,7 @@ def summarise(student, today):
     }
 
 
-def main():
-    today = datetime.now(timezone.utc).date()
-    with open("students.csv", newline="", encoding="utf-8") as f:
-        students = [s for s in csv.DictReader(f) if (s.get("github") or "").strip()]
-
-    rows = []
-    for s in students:
-        print(f"Fetching {s['github']} ...")
-        try:
-            rows.append(summarise(s, today))
-        except Exception as e:  # one broken entry should not stop the whole run
-            print(f"  failed: {e}")
-            rows.append({"name": s["name"], "github": s["github"], "error": str(e)})
-
+def save(rows, today):
     rows.sort(key=lambda r: r.get("score", -1), reverse=True)
     out = {
         "updated": datetime.now(timezone.utc).isoformat(timespec="minutes"),
@@ -145,8 +132,67 @@ def main():
     }
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1)
+
+
+def load_students():
+    with open("students.csv", newline="", encoding="utf-8") as f:
+        return [s for s in csv.DictReader(f) if (s.get("github") or "").strip()]
+
+
+def load_rows():
+    try:
+        with open("data.json", encoding="utf-8") as f:
+            data = json.load(f)
+        return [] if data.get("sample") else [r for r in data.get("students", []) if r.get("github")]
+    except (OSError, ValueError):
+        return []
+
+
+def safe_summary(s, today):
+    print(f"Fetching {s['github']} ...")
+    try:
+        return summarise(s, today)
+    except Exception as e:  # one broken entry should not stop the whole run
+        print(f"  failed: {e}")
+        return {"name": s["name"], "github": s["github"], "error": str(e)}
+
+
+def merge(new_rows):
+    """Put new_rows into data.json, keeping everyone else's existing stats.
+    Students no longer in students.csv are dropped."""
+    today = datetime.now(timezone.utc).date()
+    current = {s["github"].strip().lower(): s for s in load_students()}
+    by_user = {r["github"].lower(): r for r in load_rows()}
+    for r in new_rows:
+        by_user[r["github"].lower()] = r
+    rows = []
+    for login, r in by_user.items():
+        if login in current:
+            r["name"] = current[login]["name"].strip()  # pick up name changes
+            rows.append(r)
+    save(rows, today)
+
+
+def update_only(logins):
+    """Fetch stats for just these students (used when someone joins)."""
+    today = datetime.now(timezone.utc).date()
+    wanted = {l.lower() for l in logins}
+    merge([safe_summary(s, today) for s in load_students() if s["github"].strip().lower() in wanted])
+
+
+def main():
+    today = datetime.now(timezone.utc).date()
+    rows = [safe_summary(s, today) for s in load_students()]
+    save(rows, today)
+    with open("/tmp/leaderboard_rows.json", "w") as f:  # kept so a retry can re-merge
+        json.dump(rows, f)
     print(f"Wrote data.json with {len(rows)} students")
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 2 and sys.argv[1] == "--merge":
+        # Re-apply a full run's results on top of a newer data.json without re-fetching.
+        merge(json.load(open(sys.argv[2])))
+    else:
+        main()
