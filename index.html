@@ -7,11 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* VOICE: a teacher's weekly results sheet, calm and exact.
-   IDEA: the leader page of a weekly paper: rankings on one baseline.
-   PICTURE: podium of the top three, then the full ranked table with 30-day activity strips.
-   COLOUR and TYPE: white, ink, red tab, slate activity; Source Serif 4 titles, Inter text.
-   LAYOUT: title row, podium band, controls, table; stacks on phones. */
 :root{color-scheme:light dark;--bg:light-dark(#fff,#10191e);--ink:light-dark(#121212,#e9eef0);--mute:light-dark(#5b6470,#9aa8b0);--rule:light-dark(#d9e1e5,#26343b);--panel:light-dark(#e3ecf0,#18252c);--red:#e3120b;--slate:light-dark(#2e6f8e,#6fb3d2);--warn:light-dark(#b3261e,#ff8a80)}
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
@@ -77,7 +72,7 @@ table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-bl
 <table class="stack">
   <thead><tr>
     <th class="n" data-k="rank">Rank</th><th data-k="name">Student</th>
-    <th class="n" data-k="score">Score</th><th class="n" data-k="commits_7d">Commits 7d</th>
+    <th class="n" data-k="score">Score</th><th class="n" data-k="programs">Programs</th><th class="n" data-k="commits_7d">Commits 7d</th>
     <th class="n" data-k="commits_30d">Commits 30d</th><th class="n" data-k="active_days">Active days</th>
     <th class="n" data-k="streak">Streak</th><th data-k="last_commit">Last commit</th><th>Last 30 days</th>
   </tr></thead>
@@ -95,7 +90,7 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 let data = null, sortKey = 'rank', asc = true, idleOnly = false;
 
 const daysSince = d => d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z')) / 864e5) : Infinity;
-const ago = d => { const n = daysSince(d); return n === Infinity ? 'Never' : n <= 0 ? 'Today' : n === 1 ? 'Yesterday' : n + ' days ago'; };
+const ago = d => { const n = daysSince(d); return n === Infinity ? 'Over 30 days' : n <= 0 ? 'Today' : n === 1 ? 'Yesterday' : n + ' days ago'; };
 const ghLink = s => s.repo ? `https://github.com/${encodeURIComponent(s.repo.split('/')[0])}/${encodeURIComponent(s.repo.split('/')[1] || '')}` : `https://github.com/${encodeURIComponent(s.github)}`;
 
 function strip(daily) {
@@ -104,30 +99,36 @@ function strip(daily) {
     daily.map(c => `<i class="${c ? '' : 'z'}" style="height:${c ? Math.max(12, c / max * 100) : 8}%" title="${c} commits"></i>`).join('') + '</div>';
 }
 
+const noRepo = s => s.status === 'no_repo';
+
 function render() {
   const list = data.students;
-  const top = list.filter(s => !s.error).slice(0, 3);
+  const repoName = data.class_repo || 'class-programs';
+  const top = list.filter(s => !s.error && !noRepo(s) && s.score > 0).slice(0, 3);
   const order = [1, 0, 2].filter(i => top[i]);
   $('podium').innerHTML = order.map(i => { const s = top[i]; return `
     <div class="p ${i === 0 ? 'first' : ''}">
       <div class="rk">#${i + 1}</div>
       <div class="nm">${esc(s.name)}</div><div class="gh">@${esc(s.github)}</div>
-      <div class="sc">${esc(s.score)} <small>points · ${esc(s.commits_30d)} commits</small></div>
+      <div class="sc">${esc(s.score)} <small>points · ${esc(s.programs ?? 0)} programs · ${esc(s.commits_30d)} commits</small></div>
     </div>`; }).join('');
 
-  const ok = list.filter(s => !s.error);
+  const ok = list.filter(s => !s.error && !noRepo(s));
   const active7 = ok.filter(s => s.commits_7d > 0).length;
   const total = ok.reduce((a, s) => a + s.commits_30d, 0);
+  const progs = ok.reduce((a, s) => a + (s.programs || 0), 0);
   const idle = ok.filter(s => daysSince(s.last_commit) > 7).length;
+  const missing = list.filter(noRepo).length;
   $('stats').innerHTML = [
-    [list.length, 'students'], [total, 'commits in 30 days'],
-    [`${active7} of ${ok.length}`, 'active this week'], [idle, 'no commits for 7+ days']
+    [list.length, 'students'], [progs, 'programs uploaded'], [total, 'commits in 30 days'],
+    [`${active7} of ${list.length}`, 'active this week'], [idle, 'no commits for 7+ days'],
+    [missing, `no ${repoName} repo yet`]
   ].map(([v, l]) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('');
 
   const q = $('q').value.trim().toLowerCase();
-  let rows = list.map((s, i) => ({...s, rank: s.error ? Infinity : i + 1}))
+  let rows = list.map((s, i) => ({...s, rank: s.error || noRepo(s) ? Infinity : i + 1}))
     .filter(s => !q || (s.name + ' ' + s.github).toLowerCase().includes(q))
-    .filter(s => !idleOnly || s.error || daysSince(s.last_commit) > 7);
+    .filter(s => !idleOnly || s.error || noRepo(s) || daysSince(s.last_commit) > 7);
   rows.sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
     if (sortKey === 'last_commit') { x = -daysSince(x); y = -daysSince(y); }
@@ -138,11 +139,14 @@ function render() {
 
   $('rows').innerHTML = rows.map(s => s.error ? `
     <tr><td class="n">–</td><td>${esc(s.name)}<span class="gh2">@${esc(s.github)}</span></td>
-    <td colspan="7" class="late">Could not load: check the username or repo in students.csv</td></tr>` : `
+    <td colspan="8" class="late">Could not load: check the username or repo in students.csv</td></tr>` : noRepo(s) ? `
+    <tr><td class="n">–</td><td><a href="https://github.com/${encodeURIComponent(s.github)}">${esc(s.name)}</a><span class="gh2">@${esc(s.github)}</span></td>
+    <td colspan="8" class="late">No public repo named “${esc((s.repo || '').split('/')[1] || repoName)}” yet</td></tr>` : `
     <tr>
       <td class="n">${s.rank}</td>
-      <td><a href="${esc(ghLink(s))}">${esc(s.name)}</a><span class="gh2">@${esc(s.github)}${s.repo ? ' · ' + esc(s.repo) : ''}</span></td>
+      <td><a href="${esc(ghLink(s))}">${esc(s.name)}</a><span class="gh2">@${esc(s.github)}${s.repo && s.repo.toLowerCase() !== (s.github + '/' + repoName).toLowerCase() ? ' · ' + esc(s.repo) : ''}</span></td>
       <td class="n"><b>${esc(s.score)}</b></td>
+      <td class="n">${esc(s.programs ?? '–')}</td>
       <td class="n">${esc(s.commits_7d)}</td><td class="n">${esc(s.commits_30d)}</td>
       <td class="n">${esc(s.active_days)}</td><td class="n">${esc(s.streak)} d</td>
       <td class="${daysSince(s.last_commit) > 7 ? 'late' : ''}">${esc(ago(s.last_commit))}</td>
@@ -174,7 +178,7 @@ if (host) {
 fetch('data.json', {cache: 'no-store'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
   data = d;
   const sc = d.scoring || {};
-  $('meta').textContent = `Last ${d.days} days · updated ${new Date(d.updated).toLocaleString()}`;
+  $('meta').textContent = `Tracking each student's ${d.class_repo || 'class-programs'} repo · last ${d.days} days · updated ${new Date(d.updated).toLocaleString()}`;
   $('foot').textContent = `Score = ${sc.commit} per commit (max ${sc.max_commits_per_day} a day) + ${sc.active_day} per active day + ${sc.streak_day} per streak day. Data refreshes automatically every 6 hours.`;
   if (d.sample) { $('note').hidden = false; $('note').textContent = 'Sample data shown. It will be replaced after the first update run.'; }
   render();
