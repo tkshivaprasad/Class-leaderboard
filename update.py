@@ -3,8 +3,10 @@
 Reads students.csv with these columns:
   name    - display name
   github  - GitHub username
-  repo    - optional "owner/repo". If set, only commits in that repo count;
-            if empty, commits in all of the student's public repos count.
+  repo    - optional "owner/repo". If empty, the student's CLASS_REPO is used
+            (e.g. aarav-sharma/class-programs).
+
+Only commits in that one repo count, and the repo must be public.
 
 Needs a GITHUB_TOKEN environment variable. Inside GitHub Actions it is
 provided automatically. Uses only the Python standard library.
@@ -19,6 +21,15 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 DAYS = 30  # how far back to look
+
+# Every student keeps their programs in a public repo with this name.
+# Set it to "" to count commits in all of a student's public repos instead.
+CLASS_REPO = "class-programs"
+
+# File types counted as programs in the "Programs" column.
+PROGRAM_EXTS = {".py", ".c", ".cpp", ".cc", ".h", ".hpp", ".java", ".js", ".ts", ".jsx", ".tsx",
+                ".html", ".css", ".php", ".rb", ".go", ".rs", ".kt", ".swift", ".cs", ".r", ".sql",
+                ".sh", ".dart", ".m", ".scala", ".pl", ".lua", ".ipynb"}
 
 # Scoring rules: change these to suit your class.
 POINTS_PER_COMMIT = 1
@@ -49,21 +60,33 @@ def get(url):
                 print(f"  rate limited, waiting {min(wait, 120)}s")
                 time.sleep(min(wait, 120))
                 continue
-            if e.code in (404, 422):
-                return None  # unknown user or repo
+            if e.code in (404, 409, 422):
+                return None  # unknown user or repo, or an empty repo
             raise
     return None
 
 
-def commit_dates(student, since):
+def repo_of(student):
+    """The repo to track for this student, or "" to search all their public repos."""
+    repo = (student.get("repo") or "").strip()
+    if repo:
+        return repo
+    return f"{student['github'].strip()}/{CLASS_REPO}" if CLASS_REPO else ""
+
+
+def commit_dates(student, since, repo):
     """Return a list of commit dates (UTC) for this student since `since`."""
-    user, repo = student["github"].strip(), (student.get("repo") or "").strip()
+    user = student["github"].strip()
     dates = []
     if repo:
-        # Commits in one assignment repo, including private ones the token can read.
+        params = {"since": since.isoformat(), "per_page": 100}
+        # In the student's own repo every commit is theirs (this also counts commits made
+        # with an email that isn't linked to their account). In someone else's repo,
+        # only count the student's own commits.
+        if repo.split("/")[0].lower() != user.lower():
+            params["author"] = user
         for page in range(1, 11):
-            q = urllib.parse.urlencode({"author": user, "since": since.isoformat(),
-                                        "per_page": 100, "page": page})
+            q = urllib.parse.urlencode({**params, "page": page})
             items = get(f"{API}/repos/{repo}/commits?{q}") or []
             dates += [i["commit"]["author"]["date"] for i in items]
             if len(items) < 100:
@@ -84,9 +107,26 @@ def commit_dates(student, since):
             for d in dates]
 
 
+def count_programs(info):
+    """Count program files in the default branch of the repo."""
+    tree = get(f"{API}/repos/{info['full_name']}/git/trees/{urllib.parse.quote(info['default_branch'])}?recursive=1")
+    files = [t["path"] for t in (tree or {}).get("tree", []) if t.get("type") == "blob"]
+    return sum(1 for f in files if os.path.splitext(f)[1].lower() in PROGRAM_EXTS)
+
+
 def summarise(student, today):
     since = datetime.combine(today - timedelta(days=DAYS - 1), datetime.min.time(), timezone.utc)
-    days = commit_dates(student, since)
+    repo, programs = repo_of(student), None
+    if repo:
+        info = get(f"{API}/repos/{repo}")
+        if not info or info.get("private"):
+            # Repo doesn't exist yet, is private, or the name is wrong.
+            return {"name": student["name"].strip(), "github": student["github"].strip(), "repo": repo,
+                    "status": "no_repo", "score": 0, "commits_30d": 0, "commits_7d": 0, "active_days": 0,
+                    "streak": 0, "programs": 0, "last_commit": None, "daily": [0] * DAYS}
+        repo = info["full_name"]  # correct capitalisation
+        programs = count_programs(info)
+    days = commit_dates(student, since, repo)
     daily = [0] * DAYS  # oldest first
     for d in days:
         i = (d - since.date()).days
@@ -109,7 +149,9 @@ def summarise(student, today):
     return {
         "name": student["name"].strip(),
         "github": student["github"].strip(),
-        "repo": (student.get("repo") or "").strip(),
+        "repo": repo,
+        "status": "ok",
+        "programs": programs,
         "score": score,
         "commits_30d": commits,
         "commits_7d": sum(daily[-7:]),
@@ -126,6 +168,7 @@ def save(rows, today):
         "updated": datetime.now(timezone.utc).isoformat(timespec="minutes"),
         "days": DAYS,
         "window_start": (today - timedelta(days=DAYS - 1)).isoformat(),
+        "class_repo": CLASS_REPO,
         "scoring": {"commit": POINTS_PER_COMMIT, "active_day": POINTS_PER_ACTIVE_DAY,
                     "streak_day": POINTS_PER_STREAK_DAY, "max_commits_per_day": MAX_COMMITS_PER_DAY},
         "students": rows,
