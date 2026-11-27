@@ -9,6 +9,8 @@ body:
         Fill this in and click **Submit new issue**. You'll be added automatically
         (or once your teacher approves), and this issue will close with a confirmation.
         Your GitHub username is taken from your account, so you don't need to type it.
+
+        **Keep your programs in a public repository named `class-programs`.** Only that repo counts.
   - type: input
     id: name
     attributes:
@@ -21,7 +23,7 @@ body:
     id: repo
     attributes:
       label: Assignment repo (optional)
-      description: "Only if your teacher asked you to use one repo, e.g. your-username/python-assignments. Leave empty to count all your public repos."
-      placeholder: your-username/python-assignments
+      description: "Leave this EMPTY. The leaderboard tracks your public repo named class-programs. Only fill this in if your teacher tells you to use a different repo (format: owner/repo-name)."
+      placeholder: leave empty
     validations:
       required: false
