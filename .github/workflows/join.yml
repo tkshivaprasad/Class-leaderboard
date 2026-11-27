@@ -1,107 +1,76 @@
-"""Adds students from "Join the leaderboard" issues to students.csv and data.json.
+name: Join leaderboard
 
-Run by .github/workflows/join.yml.
-- When a student opens a join issue, only that issue is handled.
-- When the teacher clicks "Run workflow", every open join issue is handled
-  (useful for requests that got stuck).
+on:
+  issues:
+    types: [opened, labeled]
+  workflow_dispatch:   # "Run workflow" handles every open join request (fixes stuck ones)
 
-Usernames come from the issue author's account, so nobody can add someone else.
-Writes replies.json: the message to post on each issue before closing it.
-Does not commit or push; the workflow does that.
-"""
-import csv
-import json
-import os
-import re
-import subprocess
+permissions:
+  contents: write
+  issues: write
 
-import update
+# Each request runs on its own, so many students can join at the same time.
+concurrency:
+  group: join-${{ github.event.issue.number || github.run_id }}
 
-REPO = os.environ["GITHUB_REPOSITORY"]
-NEEDS_APPROVAL = os.environ.get("REQUIRE_APPROVAL", "").lower() == "true"
+jobs:
+  join:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.issue.title, 'Join') &&
+       github.event.issue.state == 'open' &&
+       (github.event.action == 'opened' || github.event.label.name == 'approved'))
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REQUIRE_APPROVAL: ${{ vars.REQUIRE_APPROVAL }}
+      NEEDS_APPROVAL: ${{ github.event_name == 'issues' && vars.REQUIRE_APPROVAL == 'true' && !contains(github.event.issue.labels.*.name, 'approved') }}
+    steps:
+      - name: Wait for teacher approval
+        if: env.NEEDS_APPROVAL == 'true'
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" \
+            --body "Thanks! Your teacher will approve this soon. You'll get a message here when you're added."
 
+      - uses: actions/checkout@v4
+        if: env.NEEDS_APPROVAL != 'true'
+        with:
+          fetch-depth: 0
 
-def issues_to_handle():
-    """Return a list of {number, login, body, labels} for the join issues to process."""
-    if os.environ.get("GITHUB_EVENT_NAME") == "issues":
-        with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
-            issue = json.load(f)["issue"]
-        return [{"number": issue["number"], "login": issue["user"]["login"], "body": issue.get("body") or "",
-                 "labels": [l["name"] for l in issue.get("labels", [])]}]
-    out = subprocess.run(["gh", "issue", "list", "--repo", REPO, "--state", "open", "--limit", "500",
-                          "--json", "number,title,body,author,labels"],
-                         check=True, capture_output=True, text=True).stdout
-    found = []
-    for i in json.loads(out):
-        if not i["title"].strip().lower().startswith("join"):
-            continue
-        labels = [l["name"] for l in i.get("labels", [])]
-        if NEEDS_APPROVAL and "approved" not in labels:
-            continue
-        found.append({"number": i["number"], "login": i["author"]["login"], "body": i.get("body") or "",
-                      "labels": labels})
-    return sorted(found, key=lambda i: i["number"])
+      - uses: actions/setup-python@v5
+        if: env.NEEDS_APPROVAL != 'true'
+        with:
+          python-version: "3.12"
 
+      - name: Add student(s) and save
+        if: env.NEEDS_APPROVAL != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.LEADERBOARD_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "leaderboard-bot"
+          git config user.email "leaderboard-bot@users.noreply.github.com"
+          # If another student joined at the same moment, start again from the newest copy.
+          saved=no
+          for attempt in 1 2 3 4 5 6 7 8; do
+            git fetch -q origin "$GITHUB_REF_NAME"
+            git reset -q --hard "origin/$GITHUB_REF_NAME"
+            python join.py
+            git add students.csv data.json
+            if git diff --cached --quiet; then echo "Nothing to save"; saved=yes; break; fi
+            git commit -q -m "Add student(s) from join requests"
+            if git push -q; then echo "Saved"; saved=yes; break; fi
+            echo "Someone else saved first, retrying ($attempt)"
+            sleep $(( (RANDOM % 8) + 2 ))
+          done
+          # Leave the request open if saving failed, so "Run workflow" can retry it later.
+          [ "$saved" = yes ]
 
-def field(body, label):
-    """Read one answer from a GitHub issue form body."""
-    m = re.search(rf"###\s*{re.escape(label)}\s*\n+(.*?)(?=\n###|\Z)", body, re.S)
-    value = m.group(1).strip() if m else ""
-    return "" if value == "_No response_" else value
-
-
-def apply(rows, login, body):
-    """Add or update one student in rows. Returns (ok, reply)."""
-    name = re.sub(r"[\r\n,\"<>]", " ", field(body, "Your full name"))
-    name = re.sub(r"\s+", " ", name).strip()[:60] or login
-    repo = field(body, "Assignment repo (optional)").strip().removeprefix("https://github.com/").strip("/")
-    if repo and not re.fullmatch(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}", repo):
-        return False, (f"Sorry @{login}, I couldn't add you. The assignment repo `{repo[:120]}` doesn't look like "
-                       "`owner/repo-name`. Please open a new join request with the correct repo, or leave it empty.")
-
-    existing = next((r for r in rows if r["github"].strip().lower() == login.lower()), None)
-    if existing:
-        existing["name"], existing["repo"] = name, repo
-        verb = "Your details are updated"
-    else:
-        rows.append({"name": name, "github": login, "repo": repo})
-        verb = "You're on the leaderboard"
-    tracked = repo or (f"{login}/{update.CLASS_REPO}" if update.CLASS_REPO else "")
-    if tracked:
-        where = (f"The leaderboard tracks your repo **{tracked}**: "
-                 f"https://github.com/{tracked}\n\n"
-                 f"If you haven't made it yet, create a **public** repository named "
-                 f"`{tracked.split('/')[1]}` and upload your programs there.")
-    else:
-        where = "The leaderboard counts commits in all your public repos."
-    return True, (f"{verb}, @{login}! Name: **{name}**.\n\n{where}\n\n"
-                  "Your stats are on the leaderboard now (the page can take 1–2 minutes to refresh).")
-
-
-def main():
-    issues = issues_to_handle()
-    print(f"{len(issues)} join request(s) to handle")
-    with open("students.csv", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-
-    replies, joined = [], []
-    for i in issues:
-        ok, reply = apply(rows, i["login"], i["body"])
-        replies.append({"number": i["number"], "reply": reply})
-        if ok:
-            joined.append(i["login"])
-        print(f"#{i['number']} {i['login']}: {'ok' if ok else 'invalid'}")
-
-    with open("students.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["name", "github", "repo"], lineterminator="\n", extrasaction="ignore")
-        w.writeheader()
-        w.writerows(rows)
-
-    if joined:
-        update.update_only(dict.fromkeys(joined))  # fetch stats for just these students
-    with open("replies.json", "w", encoding="utf-8") as f:
-        json.dump(replies, f)
-
-
-if __name__ == "__main__":
-    main()
+      - name: Reply and close
+        if: env.NEEDS_APPROVAL != 'true'
+        run: |
+          python - <<'EOF'
+          import json, subprocess, os
+          for r in json.load(open("replies.json")):
+              subprocess.run(["gh", "issue", "close", str(r["number"]), "--repo", os.environ["GITHUB_REPOSITORY"],
+                              "--comment", r["reply"]], check=False)
+          EOF
