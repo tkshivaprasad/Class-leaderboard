@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-27T15:37+00:00",
+ "updated": "2026-11-27T15:43+00:00",
  "days": 30,
  "window_start": "2026-10-29",
  "class_repo": "class-programs",
@@ -2579,13 +2579,13 @@
    "name": "Aditya RC",
    "github": "adityarc05",
    "repo": "adityarc05/class-programs",
-   "status": "no_repo",
+   "status": "ok",
+   "programs": 0,
    "score": 0,
    "commits_30d": 0,
    "commits_7d": 0,
    "active_days": 0,
    "streak": 0,
-   "programs": 0,
    "last_commit": null,
    "daily": [
     0,
